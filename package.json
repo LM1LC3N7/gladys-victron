@@ -1,6 +1,6 @@
 {
   "name": "gladys-victron",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Gladys Assistant external integration for Victron Energy GX devices (Cerbo GX, Venus OS), over their local MQTT broker. Unofficial, not affiliated with Victron Energy.",
   "type": "module",
