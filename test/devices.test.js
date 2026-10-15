@@ -1,240 +1,251 @@
+// -----------------------------------------------------------------------------
+// The store and the devices built from it, with the notifications of a real
+// installation (test/fixtures/venus.js).
+// -----------------------------------------------------------------------------
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  DEVICE_FEATURE_CATEGORIES,
-  DEVICE_FEATURE_TYPES,
-  DEVICE_POLL_FREQUENCIES,
-  DEVICE_TRANSPORTS,
-} from '@gladysassistant/integration-sdk';
 import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
-import {
-  DEVICE_BLUEPRINTS,
-  buildDiscoveredDevices,
-  buildTransportEntries,
-  createPoller,
-  findBlueprintByDevice,
-  identifyDevice,
-} from '../src/devices/index.js';
-import { simulateLanSession } from '../src/devices/plug.js';
-import { normalizeConfig } from '../src/config.js';
+import { buildModel, featureState } from '../src/devices.js';
+import { VictronStore } from '../src/store.js';
+import { parsePayload, parseTopic } from '../src/topics.js';
+import { ALL, METERS, MIN_SOC, PORTAL, VEBUS, gone, n } from './fixtures/venus.js';
 
 const gladys = createFakeGladys();
-const config = normalizeConfig();
+const externalIds = (type, id) => gladys.externalIds(type, id);
 
-test('every blueprint exposes the required shape', () => {
-  for (const bp of DEVICE_BLUEPRINTS) {
-    assert.equal(typeof bp.key, 'string', 'key must be a string');
-    assert.equal(typeof bp.deviceExternalId, 'function', 'deviceExternalId must be a function');
-    assert.equal(typeof bp.buildDevice, 'function', 'buildDevice must be a function');
-  }
-});
-
-test('buildDiscoveredDevices returns one payload per blueprint', () => {
-  const devices = buildDiscoveredDevices(gladys, config);
-  assert.equal(devices.length, DEVICE_BLUEPRINTS.length);
-  for (const device of devices) {
-    assert.equal(typeof device.name, 'string');
-    assert.ok(device.external_id, 'each device has an external_id');
-    assert.ok(Array.isArray(device.features) && device.features.length > 0);
-  }
-});
-
-test('Gladys accepts the discovery payload', async () => {
-  // The SDK fake checks the payload like the host API does: external_id
-  // prefix, known category/type/unit, poll_frequency... A refusal is a 400
-  // for the WHOLE list, so no device would show up in the Discovery tab.
-  const fresh = createFakeGladys();
-  await fresh.publishDiscoveredDevices(buildDiscoveredDevices(fresh, config));
-  assert.equal(fresh.fake.discoveredDevices.length, DEVICE_BLUEPRINTS.length);
-});
-
-test('Gladys polls exactly the devices that implement onPoll', () => {
-  const frequencies = Object.values(DEVICE_POLL_FREQUENCIES);
-  for (const bp of DEVICE_BLUEPRINTS) {
-    const device = bp.buildDevice(gladys, config);
-    if (typeof bp.onPoll === 'function') {
-      assert.equal(device.should_poll, true, `${bp.key}: without should_poll, never polled`);
-      assert.ok(frequencies.includes(device.poll_frequency), `${bp.key}: invalid poll_frequency`);
-    } else {
-      assert.notEqual(device.should_poll, true, `${bp.key}: polled for nothing`);
-    }
-  }
-});
-
-test('the poller reads a device at the refresh interval of the config', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'] });
-  const fresh = createFakeGladys();
-  const pollDevice = createPoller();
-  const plug = {
-    external_id: DEVICE_BLUEPRINTS.find((bp) => bp.key === 'plug').deviceExternalId(fresh),
-  };
-  const everyFiveMinutes = normalizeConfig({ poll_frequency: 300 });
-
-  assert.equal(await pollDevice(fresh, plug, everyFiveMinutes), true, 'the first poll reads');
-  for (let minute = 1; minute < 5; minute += 1) {
-    t.mock.timers.tick(DEVICE_POLL_FREQUENCIES.EVERY_MINUTES);
-    assert.equal(
-      await pollDevice(fresh, plug, everyFiveMinutes),
-      false,
-      `skipped at ${minute} min`,
-    );
-  }
-  // Gladys' tick may land a little early: the read is still due.
-  t.mock.timers.tick(DEVICE_POLL_FREQUENCIES.EVERY_MINUTES - 50);
-  assert.equal(await pollDevice(fresh, plug, everyFiveMinutes), true, 'read again at 5 min');
-});
-
-test('the poller retries a failed read at the next poll', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'] });
-  const pollDevice = createPoller();
-  const station = {
-    external_id: DEVICE_BLUEPRINTS.find((bp) => bp.key === 'weather-station').deviceExternalId(
-      gladys,
-    ),
-  };
-  t.mock.method(globalThis, 'fetch', async () => {
-    throw new Error('network down');
+function storeOf(messages) {
+  const store = new VictronStore();
+  const changes = messages.map(({ topic, payload }) => {
+    const info = parseTopic(topic);
+    return store.apply(info.service, info.instance, info.path, parsePayload(payload));
   });
-  await assert.rejects(pollDevice(gladys, station, config), /network down/);
+  return { store, changes };
+}
 
-  globalThis.fetch.mock.mockImplementation(async () => ({
-    ok: true,
-    json: async () => ({ current: { temperature_2m: 21.4, relative_humidity_2m: 55 } }),
-  }));
-  t.mock.timers.tick(DEVICE_POLL_FREQUENCIES.EVERY_MINUTES);
-  assert.equal(await pollDevice(gladys, station, config), true, 'not delayed by the failure');
-  assert.equal(gladys.fake.lastState(`${station.external_id}:temperature`), 21.4);
-});
+const model = (messages) =>
+  buildModel({ externalIds, portal: PORTAL, store: storeOf(messages).store });
+const keys = (device) => device.features.map((f) => f.external_id.split(':').pop());
+const named = (m, name) => m.devices.find((d) => d.name === name);
 
-test('the poller ignores a device that has nothing to poll', async () => {
-  const pollDevice = createPoller();
-  const switchId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'switch').deviceExternalId(gladys);
-  assert.equal(await pollDevice(gladys, { external_id: switchId }, config), false);
-  assert.equal(await pollDevice(gladys, { external_id: 'does-not-exist' }, config), false);
-});
+function state(m, featureId, messages) {
+  return featureState(m.features.get(featureId), storeOf(messages).store);
+}
 
-test('an idle plug publishes its 0 W once, then only as a heartbeat', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'] });
-  const fresh = createFakeGladys();
-  const plug = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'plug');
-  await plug.onPoll(fresh, config);
-  await plug.onPoll(fresh, config);
-  assert.equal(fresh.fake.states.length, 1, 'an unchanged value is not sent again');
-  t.mock.timers.tick(30 * 60 * 1000);
-  await plug.onPoll(fresh, config);
-  assert.equal(fresh.fake.states.length, 2, 're-sent after 30 minutes');
-});
-
-test('device external_ids are unique across the catalog', () => {
-  const devices = buildDiscoveredDevices(gladys, config);
-  const ids = devices.map((d) => d.external_id);
-  assert.equal(new Set(ids).size, ids.length, 'no two devices may share an external_id');
-});
-
-test('findBlueprintByDevice routes an external_id back to its owner blueprint', () => {
-  for (const bp of DEVICE_BLUEPRINTS) {
-    const external_id = bp.deviceExternalId(gladys);
-    const found = findBlueprintByDevice(gladys, { external_id });
-    assert.equal(found, bp);
-  }
-});
-
-test('findBlueprintByDevice returns undefined for an unknown device', () => {
-  const found = findBlueprintByDevice(gladys, { external_id: 'does-not-exist' });
-  assert.equal(found, undefined);
-});
-
-test('manifest action keys are unique across blueprints', () => {
-  const keys = DEVICE_BLUEPRINTS.flatMap((bp) => Object.keys(bp.actions ?? {}));
-  assert.equal(new Set(keys).size, keys.length, 'no two blueprints may register the same action');
-});
-
-test('the camera declares a camera/image feature', () => {
-  const cameraBlueprint = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'camera');
-  const device = cameraBlueprint.buildDevice(gladys, config);
-  const imageFeature = device.features.find((f) => f.category === DEVICE_FEATURE_CATEGORIES.CAMERA);
-  assert.ok(imageFeature, 'the camera must carry a camera feature');
-  assert.equal(imageFeature.type, DEVICE_FEATURE_TYPES.CAMERA.IMAGE);
-  assert.equal(imageFeature.read_only, true);
-});
-
-test('onGetImage resolves a base64 JPEG under the 150 KB limit', async () => {
-  const cameraBlueprint = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'camera');
-  const image = await cameraBlueprint.onGetImage(gladys, {
-    device: { external_id: cameraBlueprint.deviceExternalId(gladys) },
-    config,
-  });
-  assert.match(image, /^image\/jpg;base64,/);
-  assert.ok(image.length <= 150 * 1024, 'the image must stay under 150 KB');
-});
-
-test('buildTransportEntries reports one valid entry per dual-channel device', () => {
-  const entries = buildTransportEntries(gladys, config);
-  assert.ok(entries.length > 0, 'the demo plug reports its transport');
-  const validValues = Object.values(DEVICE_TRANSPORTS);
-  for (const entry of entries) {
-    assert.ok(entry.external_id, 'each entry targets a device external_id');
-    assert.ok(validValues.includes(entry.transport), `invalid transport: ${entry.transport}`);
-  }
-});
-
-test('the demo plug honors the GLADYS_PREFER_LOCAL preference', () => {
-  const local = buildTransportEntries(gladys, normalizeConfig({ GLADYS_PREFER_LOCAL: true }));
-  const cloud = buildTransportEntries(gladys, normalizeConfig({ GLADYS_PREFER_LOCAL: false }));
-  const plugId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'plug').deviceExternalId(gladys);
-  assert.equal(local.find((e) => e.external_id === plugId).transport, DEVICE_TRANSPORTS.LOCAL);
-  assert.equal(cloud.find((e) => e.external_id === plugId).transport, DEVICE_TRANSPORTS.CLOUD);
-});
-
-test('nominal transport entries never carry a leftover degraded flag', () => {
-  const entries = buildTransportEntries(gladys, config);
-  for (const entry of entries) {
-    assert.equal(entry.degraded, undefined, 'nominal entries must clear the degraded state');
-  }
-});
-
-test('the plug reports a degraded cloud fallback when the LAN session is refused', () => {
-  const plugId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'plug').deviceExternalId(gladys);
-  simulateLanSession(false);
-  try {
-    const entries = buildTransportEntries(gladys, normalizeConfig({ GLADYS_PREFER_LOCAL: true }));
-    const entry = entries.find((e) => e.external_id === plugId);
-    assert.equal(entry.transport, DEVICE_TRANSPORTS.CLOUD, 'falls back to cloud');
-    assert.equal(entry.degraded, true, 'the fallback is flagged degraded');
-    assert.ok(entry.message.en, 'the reason carries at least the mandatory `en` text');
-    assert.ok(entry.message.en.length <= 200, 'tooltip messages are capped at 200 characters');
-  } finally {
-    simulateLanSession(true);
-  }
-});
-
-test('identifyDevice signals a device that implements identify', async () => {
-  const lightId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'light').deviceExternalId(gladys);
-  const message = await identifyDevice(gladys, lightId, config);
-  assert.match(message.en, /signalling/);
-  assert.ok(message.fr, 'the message is multi-language');
-});
-
-test('identifyDevice explains when the device has no way to signal itself', async () => {
-  const weatherId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'weather-station').deviceExternalId(
-    gladys,
+test('one device per supported service, named by the GX', () => {
+  const m = model([...ALL, MIN_SOC]);
+  assert.deepEqual(
+    m.devices.map((d) => d.name),
+    [
+      'Victron system',
+      'SmartShunt 500A/50mV',
+      'MPPT toit',
+      'SmartSolar Charger MPPT 100/20',
+      'MultiPlus-II 48/5000/70-50',
+      'Energy Meter ET112',
+      'Fronius Primo 3.0-1',
+      'Borne garage',
+      'Pompe piscine',
+    ],
+    'custom name first, product name else; the tank is not supported yet',
   );
-  const message = await identifyDevice(gladys, weatherId, config);
-  assert.match(message.en, /no way to signal/);
+  const shunt = named(m, 'SmartShunt 500A/50mV');
+  assert.equal(shunt.external_id, `ext:test-integration:battery:${PORTAL}-279`);
+  assert.deepEqual(shunt.params, [
+    { name: 'VICTRON_PORTAL_ID', value: PORTAL },
+    { name: 'VICTRON_SERVICE', value: 'battery/279' },
+    { name: 'VICTRON_PRODUCT', value: 'SmartShunt 500A/50mV' },
+  ]);
 });
 
-test('the test_weather action returns a multi-language message', async () => {
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({
-    ok: true,
-    json: async () => ({ current: { temperature_2m: 21.4, relative_humidity_2m: 55 } }),
-  });
-  try {
-    const weatherStation = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'weather-station');
-    const message = await weatherStation.actions.test_weather(gladys, { fields: {}, config });
-    assert.match(message.en, /21\.4/);
-    assert.match(message.fr, /21\.4/);
-  } finally {
-    globalThis.fetch = realFetch;
+test('the features follow the paths the device publishes', () => {
+  const m = model([...ALL, MIN_SOC]);
+  assert.deepEqual(
+    keys(named(m, 'SmartShunt 500A/50mV')),
+    [
+      'soc',
+      'charge_power',
+      'discharge_power',
+      'voltage',
+      'current',
+      'charged_energy',
+      'discharged_energy',
+    ],
+    'no temperature: the shunt has no sensor (null)',
+  );
+  assert.deepEqual(keys(named(m, 'MPPT toit')), [
+    'pv_power',
+    'yield_today',
+    'yield_total',
+    'state',
+  ]);
+  assert.deepEqual(keys(named(m, 'MultiPlus-II 48/5000/70-50')), [
+    'ac_in_power',
+    'ac_out_power',
+    'state',
+    'mode',
+  ]);
+  assert.deepEqual(keys(named(m, 'Energy Meter ET112')), ['power', 'import_index', 'export_index']);
+  assert.deepEqual(keys(named(m, 'Borne garage')), [
+    'power',
+    'index',
+    'connector_status',
+    'charging_state',
+    'status',
+  ]);
+  assert.deepEqual(
+    keys(named(m, 'Victron system')),
+    ['consumption', 'state', 'ess_min_soc'],
+    'no system grid power next to a grid meter',
+  );
+});
+
+test('the system grid power and the ESS minimum SOC depend on the installation', () => {
+  const withoutMeter = ALL.filter((msg) => !msg.topic.includes('/grid/'));
+  const noEss = withoutMeter.map((msg) =>
+    msg.topic.endsWith('/system/0/Hub') ? n('system/0', 'Hub', 0) : msg,
+  );
+  assert.deepEqual(keys(named(model([...withoutMeter, MIN_SOC]), 'Victron system')), [
+    'consumption',
+    'grid_power',
+    'state',
+    'ess_min_soc',
+  ]);
+  assert.deepEqual(keys(named(model([...noEss, MIN_SOC]), 'Victron system')), [
+    'consumption',
+    'grid_power',
+    'state',
+  ]);
+  assert.ok(
+    !keys(named(model(ALL), 'Victron system')).includes('ess_min_soc'),
+    'the setting is only known once read',
+  );
+});
+
+test('the Gladys values', () => {
+  const messages = [...ALL, MIN_SOC];
+  const m = model(messages);
+  const id = (type, instance, key) => `ext:test-integration:${type}:${PORTAL}-${instance}:${key}`;
+  const expected = [
+    [id('battery', 279, 'soc'), { state: 76.5 }],
+    [id('battery', 279, 'voltage'), { state: 52.31 }],
+    [id('battery', 279, 'current'), { state: -8.4 }],
+    [id('battery', 279, 'charge_power'), { state: 0 }],
+    [id('battery', 279, 'discharge_power'), { state: 439 }],
+    [id('battery', 279, 'charged_energy'), { state: 1234.5 }],
+    [id('solarcharger', 278, 'pv_power'), { state: 1520 }],
+    [id('solarcharger', 278, 'yield_today'), { state: 4.82 }],
+    [id('solarcharger', 278, 'yield_total'), { state: 2345.67 }],
+    [id('solarcharger', 278, 'state'), { text: 'Bulk' }],
+    [id('vebus', 276, 'ac_in_power'), { state: -120 }],
+    [id('vebus', 276, 'ac_out_power'), { state: 645 }],
+    [id('vebus', 276, 'state'), { text: 'Inverting' }],
+    [id('vebus', 276, 'mode'), { text: 'on' }],
+    [id('grid', 30, 'power'), { state: -351 }],
+    [id('grid', 30, 'import_index'), { state: 8765.43 }],
+    [id('acload', 31, 'power'), { state: 812 }],
+    [id('pvinverter', 20, 'power'), { state: 1891 }],
+    [id('pvinverter', 20, 'state'), { text: 'Running' }],
+    [id('evcharger', 40, 'connector_status'), { state: 1 }],
+    [id('evcharger', 40, 'charging_state'), { state: 0 }],
+    [id('evcharger', 40, 'status'), { text: 'Charging' }],
+    [id('system', 0, 'consumption'), { state: 512 }],
+    [id('system', 0, 'state'), { text: 'Discharging' }],
+    [id('system', 0, 'ess_min_soc'), { state: 20 }],
+  ];
+  for (const [featureId, value] of expected) {
+    assert.deepEqual(state(m, featureId, messages), value, featureId);
   }
+});
+
+test('routes, writers and throttling', () => {
+  const m = model([...ALL, MIN_SOC]);
+  const mode = `ext:test-integration:vebus:${PORTAL}-276:mode`;
+  const minSoc = `ext:test-integration:system:${PORTAL}-0:ess_min_soc`;
+  assert.deepEqual(m.routes.get('battery/279|Dc/0/Power'), [
+    `ext:test-integration:battery:${PORTAL}-279:charge_power`,
+    `ext:test-integration:battery:${PORTAL}-279:discharge_power`,
+  ]);
+  assert.deepEqual(m.routes.get('settings/0|Settings/CGwacs/BatteryLife/MinimumSocLimit'), [
+    minSoc,
+  ]);
+  assert.deepEqual(m.writers.get(mode)('charger-only'), {
+    serviceKey: 'vebus/276',
+    path: 'Mode',
+    value: 1,
+  });
+  assert.deepEqual(m.writers.get(minSoc)(25), {
+    serviceKey: 'settings/0',
+    path: 'Settings/CGwacs/BatteryLife/MinimumSocLimit',
+    value: 25,
+  });
+  assert.equal(m.writers.size, 2, 'only the mode and the minimum SOC can be written');
+  assert.ok(m.throttled.has(`ext:test-integration:battery:${PORTAL}-279:soc`));
+  assert.ok(!m.throttled.has(mode), 'a mode change is never delayed');
+  const vebus = named(m, 'MultiPlus-II 48/5000/70-50');
+  const feature = vebus.features.find((f) => f.external_id === mode);
+  assert.equal(feature.read_only, false);
+  assert.deepEqual(
+    feature.supported_options.map((o) => o.value),
+    ['on', 'off', 'charger-only', 'inverter-only'],
+  );
+  const locked = model([...VEBUS, n('vebus/276', 'ModeIsAdjustable', 0)]);
+  assert.equal(
+    named(locked, 'MultiPlus-II 48/5000/70-50').features.find((f) => f.external_id === mode)
+      .read_only,
+    true,
+    'a VE.Bus BMS holds the switch',
+  );
+  assert.equal(locked.writers.size, 0);
+});
+
+test('Gladys accepts the devices', async () => {
+  const fake = createFakeGladys();
+  await fake.publishDiscoveredDevices(model([...ALL, MIN_SOC]).devices);
+  assert.equal(fake.fake.discoveredDevices.length, 9);
+});
+
+test('what the store says about each notification', () => {
+  const { store, changes } = storeOf([
+    ...METERS.slice(0, 4),
+    n('grid/30', 'Ac/Power', -200),
+    n('grid/30', 'Ac/Power', null),
+    n('grid/30', 'CustomName', 'Compteur'),
+    gone('grid/30', 'Ac/Power'),
+    gone('grid/30', 'ProductId'),
+    gone('grid/31', 'ProductId'),
+  ]);
+  assert.deepEqual(changes, [
+    { structural: true }, // a new service
+    { structural: true }, // a new name
+    { structural: true }, // a custom name, even empty
+    { structural: true }, // the first number on a path
+    { structural: false }, // another number
+    { structural: false }, // invalid for now
+    { structural: true }, // renamed
+    {}, // a path cleared
+    { structural: true, removed: 'grid/30' }, // the device left
+    {}, // unknown service
+  ]);
+  assert.equal(store.services.size, 0);
+});
+
+test('a full publish forgets the services it did not mention, never the settings', () => {
+  const { store } = storeOf([...METERS, MIN_SOC]);
+  store.mark();
+  for (const { topic, payload } of METERS.filter((msg) => msg.topic.includes('/acload/'))) {
+    const info = parseTopic(topic);
+    store.apply(info.service, info.instance, info.path, parsePayload(payload));
+  }
+  assert.deepEqual(
+    store.sweep((type) => type !== 'settings'),
+    ['grid/30'],
+  );
+  assert.deepEqual([...store.services.keys()], ['acload/31', 'settings/0']);
+});
+
+test('the number of services is bounded', () => {
+  const store = new VictronStore({ limit: 1 });
+  assert.deepEqual(store.apply('battery', '1', 'Soc', { value: 1 }), { structural: true });
+  assert.match(store.apply('battery', '2', 'Soc', { value: 1 }).ignored, /more than 1/);
 });

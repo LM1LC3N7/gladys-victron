@@ -1,177 +1,132 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "Victron Energy GX",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Victron GX (Cerbo, Venus OS): battery, solar, inverter, meters and EV charger over local MQTT.",
+    "fr": "GX Victron (Cerbo, Venus OS) : batterie, solaire, onduleur, compteurs et borne en MQTT local."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
-  "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-victron:0.1.0",
+  "gladys_version": ">=5.0.0",
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-victron/main/cover.png",
+  "categories": ["energy"],
+  "transports": ["local"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": {
+        "en": "Your Victron installation in Gladys",
+        "fr": "Votre installation Victron dans Gladys"
+      },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "Reads your Victron Energy GX device (Cerbo GX, Ekrano GX, Venus OS on a Raspberry Pi...) on your local network, through its own MQTT broker: battery, solar chargers, PV inverters, inverter/charger (state and mode), grid and AC load meters, EV charging station, and the ESS minimum state of charge. On the GX device, turn on MQTT (Settings > Services > MQTT, Venus OS 3.20 or later), then type its IP address below. Nothing goes through the Internet nor VRM. Unofficial, not affiliated with Victron Energy.",
+        "fr": "Lit votre GX Victron Energy (Cerbo GX, Ekrano GX, Venus OS sur Raspberry Pi...) sur votre réseau local, via son propre broker MQTT : batterie, chargeurs solaires, onduleurs PV, onduleur/chargeur (état et mode), compteurs réseau et de charges AC, borne de recharge, et le SOC minimum de l'ESS. Sur le GX, activez MQTT (Paramètres > Services > MQTT, Venus OS 3.20 ou plus récent), puis saisissez son adresse IP ci-dessous. Rien ne passe par Internet ni par VRM. Non officiel, sans lien avec Victron Energy."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-victron/blob/main/docs/fr.md",
+          "label": { "en": "Guide (French)", "fr": "Guide (français)" }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-victron/blob/main/docs/en.md",
+          "label": { "en": "Guide (English)", "fr": "Guide (anglais)" }
+        },
+        {
+          "url": "https://github.com/victronenergy/dbus-flashmq",
+          "label": {
+            "en": "The MQTT broker of the GX device (Victron)",
+            "fr": "Le broker MQTT du GX (Victron)"
+          }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
+      "key": "broker_url",
+      "type": "string",
+      "label": { "en": "GX device address", "fr": "Adresse du GX" },
       "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+        "en": "The IP address of the GX device (MQTT on port 1883). With the \"Secured\" network security profile of the GX: mqtts://address:8883.",
+        "fr": "L'adresse IP du GX (MQTT sur le port 1883). Avec le profil de sécurité réseau « Sécurisé » du GX : mqtts://adresse:8883."
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
+      "placeholder": { "en": "192.168.1.50", "fr": "192.168.1.50" },
+      "required": true
     },
     {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
+      "key": "username",
+      "type": "string",
+      "label": { "en": "User name", "fr": "Utilisateur" },
       "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
+        "en": "Only with a password: the GX device does not check it, any name works (for example gladys).",
+        "fr": "Seulement avec un mot de passe : le GX ne le vérifie pas, n'importe quel nom convient (par exemple gladys)."
       },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
-      "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
+      "placeholder": {
+        "en": "Empty with the \"Unsecured\" profile",
+        "fr": "Vide avec le profil « Non sécurisé »"
+      },
+      "required": false
     },
     {
-      "key": "unit",
-      "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
+      "key": "password",
+      "type": "secret",
+      "label": { "en": "Password", "fr": "Mot de passe" },
+      "description": {
+        "en": "The password of the GX device, for the \"Secured\" and \"Weak\" network security profiles.",
+        "fr": "Le mot de passe du GX, pour les profils de sécurité réseau « Sécurisé » et « Faible »."
+      },
+      "required": false
+    },
+    {
+      "key": "portal_id",
+      "type": "string",
+      "label": {
+        "en": "VRM portal ID (optional)",
+        "fr": "Identifiant du portail VRM (facultatif)"
+      },
+      "description": {
+        "en": "Read automatically from the GX device. Only needed when several GX devices share the same broker (Settings > VRM online portal on the GX).",
+        "fr": "Lu automatiquement sur le GX. Utile seulement quand plusieurs GX partagent le même broker (Paramètres > Portail VRM en ligne sur le GX)."
+      },
+      "placeholder": { "en": "Read automatically", "fr": "Lu automatiquement" },
+      "required": false
+    },
+    {
+      "key": "verify_certificate",
+      "type": "boolean",
+      "label": {
+        "en": "Verify the TLS certificate of the GX device (mqtts)",
+        "fr": "Vérifier le certificat TLS du GX (mqtts)"
+      },
+      "description": {
+        "en": "The GX device uses its own certificate, which no public authority signed: leave off, unless you installed a trusted one.",
+        "fr": "Le GX utilise son propre certificat, qu'aucune autorité publique n'a signé : laissez désactivé, sauf si vous en avez installé un reconnu."
+      },
       "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
-      ]
+      "default": false
     },
     {
-      "key": "poll_frequency",
+      "key": "sensor_interval",
       "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "label": {
+        "en": "Minimum interval between two readings of a measurement (s)",
+        "fr": "Intervalle minimum entre deux mesures (s)"
+      },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
+        "en": "The GX device publishes every second: Gladys keeps the last reading at this pace. States and modes are never delayed.",
+        "fr": "Le GX publie chaque seconde : Gladys garde la dernière mesure à ce rythme. Les états et les modes ne sont jamais retardés."
       },
       "required": false,
-      "default": 300,
-      "min": 60,
-      "max": 3600
+      "default": 10,
+      "min": 0,
+      "max": 300
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
-      "timeout_seconds": 30
-    },
-    {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
-    }
-  ],
-  "scene_triggers": [
-    {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
-      "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
-      },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
-        },
-        {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
-          "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
-          ]
-        }
-      ],
-      "variables": [
-        {
-          "key": "target",
-          "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
-        }
-      ]
-    }
-  ],
-  "scene_actions": [
-    {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
-      },
-      "timeout_seconds": 15,
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ],
-      "outputs": [
-        {
-          "key": "signalled",
-          "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
-        }
-      ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
+      "key": "test_connection",
+      "label": { "en": "Test the connection", "fr": "Tester la connexion" },
+      "timeout_seconds": 45
     }
   ]
 }
