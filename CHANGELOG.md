@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-28
+
 ### Fixed
 
 - Plain string labels for the select options of the inverter/charger mode, so
@@ -46,5 +48,6 @@ the notes of the version's GitHub Release.
 - Measurements rounded and throttled to a configurable interval, all states
   within the Gladys rate limit.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-victron/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/LM1LC3N7/gladys-victron/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/LM1LC3N7/gladys-victron/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/LM1LC3N7/gladys-victron/releases/tag/v0.1.1
