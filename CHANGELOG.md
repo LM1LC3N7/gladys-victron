@@ -10,6 +10,12 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+### Fixed
+
+- Plain string labels for the select options of the inverter/charger mode, so
+  Discovery lists the devices (the Gladys core refused the whole publication
+  because of `{ en, fr }` labels).
+
 ### Changed
 
 - README: the store install note replaces the work-in-progress notice, and the

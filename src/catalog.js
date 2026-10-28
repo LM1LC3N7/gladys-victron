@@ -223,12 +223,16 @@ export function evChargerStatus(code) {
 
 // --- Inverter/charger mode -----------------------------------------------------
 
-/** The switch of the inverter/charger (/Mode). Values are frozen: scenes store them. */
+/**
+ * The switch of the inverter/charger (/Mode). Values are frozen: scenes store them.
+ * The labels are plain strings: the Gladys core refuses a publication whose option
+ * label is anything else.
+ */
 export const MODES = [
-  { value: 'on', code: 3, label: { en: 'On', fr: 'Marche' } },
-  { value: 'off', code: 4, label: { en: 'Off', fr: 'Arrêt' } },
-  { value: 'charger-only', code: 1, label: { en: 'Charger only', fr: 'Chargeur seul' } },
-  { value: 'inverter-only', code: 2, label: { en: 'Inverter only', fr: 'Onduleur seul' } },
+  { value: 'on', code: 3, label: 'On' },
+  { value: 'off', code: 4, label: 'Off' },
+  { value: 'charger-only', code: 1, label: 'Charger only' },
+  { value: 'inverter-only', code: 2, label: 'Inverter only' },
 ];
 
 const modeFeature = {

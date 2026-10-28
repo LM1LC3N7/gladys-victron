@@ -97,7 +97,7 @@ test('the inverter/charger mode', () => {
   assert.equal(mode.readOnly(new Map([['ModeIsAdjustable', 1]])), false);
   assert.equal(mode.readOnly(new Map()), false, 'adjustable unless the GX says otherwise');
   for (const option of mode.options) {
-    assert.ok(option.label.en && option.label.fr, option.value);
+    assert.equal(typeof option.label, 'string', option.value);
   }
 });
 
